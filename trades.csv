@@ -1,2 +1,8 @@
 Date,Time (UTC),Exchange,Symbol,Side,Quantity,Price,Total USD,Fee (est.),Net Amount,Order ID,Mode,Notes
 ,,,,,,,,,,,"NOTE","Hey, if you're at this stage of the video, you must be enjoying it... perhaps you could hit subscribe now? :)"
+2026-04-21,17:53:05,BitGet,BTCUSDT,,,75766.01,,,,BLOCKED,BLOCKED,"Failed: RSI(3) above 70 (reversal setup in downtrend)"
+2026-04-21,18:39:02,BitGet,BTCUSDT,,,75542.62,,,,BLOCKED,BLOCKED,"Failed: RSI(3) above 70 (reversal setup in downtrend)"
+2026-04-21,18:44:45,BitGet,BTCUSDT,,,75517.30,,,,BLOCKED,BLOCKED,"Failed: RSI(3) above 70 (reversal setup in downtrend)"
+2026-04-21,19:33:36,BitGet,BTCUSDT,,,75661.81,,,,BLOCKED,BLOCKED,"Failed: RSI(3) above 70 (reversal setup in downtrend)"
+2026-04-21,19:49:24,BitGet,BTCUSDT,,,74967.93,,,,BLOCKED,BLOCKED,"Failed: RSI(3) above 70 (reversal setup in downtrend)"
+2026-04-21,19:57:19,BitGet,BTCUSDT,BUY,0.000013,74963.18,1.00,0.0010,1.00,PAPER-1776801439308,PAPER,"All conditions met"

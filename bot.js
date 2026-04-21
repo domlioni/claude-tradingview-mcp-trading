@@ -19,10 +19,18 @@ import { execSync } from "child_process";
 function checkOnboarding() {
   const required = ["BITGET_API_KEY", "BITGET_SECRET_KEY", "BITGET_PASSPHRASE"];
   const missing = required.filter((k) => !process.env[k]);
+  const isCloud = !!process.env.RAILWAY_SERVICE_ID;
 
-  if (!existsSync(".env")) {
+  // On Railway/cloud, env vars come from the dashboard — skip .env entirely
+  if (isCloud && missing.length > 0) {
+    console.log(`\n⚠️ Missing env vars in Railway dashboard: ${missing.join(", ")}`);
+    console.log("Add them in Railway → your project → Variables, then redeploy.\n");
+    process.exit(0);
+  }
+
+  if (!existsSync(".env") && !isCloud) {
     console.log(
-      "\n⚠️  No .env file found — opening it for you to fill in...\n",
+      "\n⚠️ No .env file found — opening it for you to fill in...\n",
     );
     writeFileSync(
       ".env",
@@ -38,7 +46,7 @@ function checkOnboarding() {
         "MAX_TRADES_PER_DAY=3",
         "PAPER_TRADING=true",
         "SYMBOL=BTCUSDT",
-        "TIMEFRAME=4H",
+        "TIMEFRAME=5m",
       ].join("\n") + "\n",
     );
     try {
@@ -50,8 +58,8 @@ function checkOnboarding() {
     process.exit(0);
   }
 
-  if (missing.length > 0) {
-    console.log(`\n⚠️  Missing credentials in .env: ${missing.join(", ")}`);
+  if (missing.length > 0 && !isCloud) {
+    console.log(`\n⚠️ Missing credentials in .env: ${missing.join(", ")}`);
     console.log("Opening .env for you now...\n");
     try {
       execSync("open .env");
@@ -64,8 +72,8 @@ function checkOnboarding() {
   const csvPath = new URL("trades.csv", import.meta.url).pathname;
   console.log(`\n📄 Trade log: ${csvPath}`);
   console.log(
-    `   Open in Google Sheets or Excel any time — or tell Claude to move it:\n` +
-      `   "Move my trades.csv to ~/Desktop" or "Move it to my Documents folder"\n`,
+    ` Open in Google Sheets or Excel any time — or tell Claude to move it:\n` +
+    ` "Move my trades.csv to ~/Desktop" or "Move it to my Documents folder"\n`,
   );
 }
 
@@ -73,7 +81,7 @@ function checkOnboarding() {
 
 const CONFIG = {
   symbol: process.env.SYMBOL || "BTCUSDT",
-  timeframe: process.env.TIMEFRAME || "4H",
+  timeframe: process.env.TIMEFRAME || "5m",
   portfolioValue: parseFloat(process.env.PORTFOLIO_VALUE_USD || "1000"),
   maxTradeSizeUSD: parseFloat(process.env.MAX_TRADE_SIZE_USD || "100"),
   maxTradesPerDay: parseInt(process.env.MAX_TRADES_PER_DAY || "3"),
@@ -124,19 +132,39 @@ async function fetchCandles(symbol, interval, limit = 100) {
   };
   const binanceInterval = intervalMap[interval] || "1m";
 
-  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=${limit}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Binance API error: ${res.status}`);
-  const data = await res.json();
+  // Try multiple Binance endpoints in case of regional blocks (error 451)
+  const endpoints = [
+    "https://api.binance.com",
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+    "https://data-api.binance.vision",
+  ];
 
-  return data.map((k) => ({
-    time: k[0],
-    open: parseFloat(k[1]),
-    high: parseFloat(k[2]),
-    low: parseFloat(k[3]),
-    close: parseFloat(k[4]),
-    volume: parseFloat(k[5]),
-  }));
+  let lastError = null;
+  for (const base of endpoints) {
+    try {
+      const url = `${base}/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=${limit}`;
+      const res = await fetch(url);
+      if (res.status === 451) {
+        console.log(`  ${base} → blocked (451), trying next...`);
+        continue;
+      }
+      if (!res.ok) throw new Error(`Binance API error: ${res.status}`);
+      const data = await res.json();
+      return data.map((k) => ({
+        time: k[0],
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+        volume: parseFloat(k[5]),
+      }));
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("All Binance endpoints blocked or unavailable");
 }
 
 // ─── Indicator Calculations ──────────────────────────────────────────────────
@@ -188,8 +216,8 @@ function runSafetyCheck(price, ema8, vwap, rsi3, rules) {
   const check = (label, required, actual, pass) => {
     results.push({ label, required, actual, pass });
     const icon = pass ? "✅" : "🚫";
-    console.log(`  ${icon} ${label}`);
-    console.log(`     Required: ${required} | Actual: ${actual}`);
+    console.log(` ${icon} ${label}`);
+    console.log(` Required: ${required} | Actual: ${actual}`);
   };
 
   console.log("\n── Safety Check ─────────────────────────────────────────\n");
@@ -199,7 +227,7 @@ function runSafetyCheck(price, ema8, vwap, rsi3, rules) {
   const bearishBias = price < vwap && price < ema8;
 
   if (bullishBias) {
-    console.log("  Bias: BULLISH — checking long entry conditions\n");
+    console.log(" Bias: BULLISH — checking long entry conditions\n");
 
     // 1. Price above VWAP
     check(
@@ -234,7 +262,7 @@ function runSafetyCheck(price, ema8, vwap, rsi3, rules) {
       distFromVWAP < 1.5,
     );
   } else if (bearishBias) {
-    console.log("  Bias: BEARISH — checking short entry conditions\n");
+    console.log(" Bias: BEARISH — checking short entry conditions\n");
 
     check(
       "Price below VWAP (sellers in control)",
@@ -265,7 +293,7 @@ function runSafetyCheck(price, ema8, vwap, rsi3, rules) {
       distFromVWAP < 1.5,
     );
   } else {
-    console.log("  Bias: NEUTRAL — no clear direction. No trade.\n");
+    console.log(" Bias: NEUTRAL — no clear direction. No trade.\n");
     results.push({
       label: "Market bias",
       required: "Bullish or bearish",
@@ -481,13 +509,13 @@ function generateTaxSummary() {
   const totalFees = live.reduce((sum, r) => sum + parseFloat(r[8] || 0), 0);
 
   console.log("\n── Tax Summary ──────────────────────────────────────────\n");
-  console.log(`  Total decisions logged : ${rows.length}`);
-  console.log(`  Live trades executed   : ${live.length}`);
-  console.log(`  Paper trades           : ${paper.length}`);
-  console.log(`  Blocked by safety check: ${blocked.length}`);
-  console.log(`  Total volume (USD)     : $${totalVolume.toFixed(2)}`);
-  console.log(`  Total fees paid (est.) : $${totalFees.toFixed(4)}`);
-  console.log(`\n  Full record: ${CSV_FILE}`);
+  console.log(` Total decisions logged : ${rows.length}`);
+  console.log(` Live trades executed   : ${live.length}`);
+  console.log(` Paper trades           : ${paper.length}`);
+  console.log(` Blocked by safety check: ${blocked.length}`);
+  console.log(` Total volume (USD)     : $${totalVolume.toFixed(2)}`);
+  console.log(` Total fees paid (est.) : $${totalFees.toFixed(4)}`);
+  console.log(`\n Full record: ${CSV_FILE}`);
   console.log("─────────────────────────────────────────────────────────\n");
 }
 
@@ -497,10 +525,10 @@ async function run() {
   checkOnboarding();
   initCsv();
   console.log("═══════════════════════════════════════════════════════════");
-  console.log("  Claude Trading Bot");
-  console.log(`  ${new Date().toISOString()}`);
+  console.log(" Claude Trading Bot");
+  console.log(` ${new Date().toISOString()}`);
   console.log(
-    `  Mode: ${CONFIG.paperTrading ? "📋 PAPER TRADING" : "🔴 LIVE TRADING"}`,
+    ` Mode: ${CONFIG.paperTrading ? "📋 PAPER TRADING" : "🔴 LIVE TRADING"}`,
   );
   console.log("═══════════════════════════════════════════════════════════");
 
@@ -522,19 +550,19 @@ async function run() {
   const candles = await fetchCandles(CONFIG.symbol, CONFIG.timeframe, 500);
   const closes = candles.map((c) => c.close);
   const price = closes[closes.length - 1];
-  console.log(`  Current price: $${price.toFixed(2)}`);
+  console.log(` Current price: $${price.toFixed(2)}`);
 
   // Calculate indicators
   const ema8 = calcEMA(closes, 8);
   const vwap = calcVWAP(candles);
   const rsi3 = calcRSI(closes, 3);
 
-  console.log(`  EMA(8):  $${ema8.toFixed(2)}`);
-  console.log(`  VWAP:    $${vwap ? vwap.toFixed(2) : "N/A"}`);
-  console.log(`  RSI(3):  ${rsi3 ? rsi3.toFixed(2) : "N/A"}`);
+  console.log(` EMA(8): $${ema8.toFixed(2)}`);
+  console.log(` VWAP: $${vwap ? vwap.toFixed(2) : "N/A"}`);
+  console.log(` RSI(3): ${rsi3 ? rsi3.toFixed(2) : "N/A"}`);
 
   if (!vwap || !rsi3) {
-    console.log("\n⚠️  Not enough data to calculate indicators. Exiting.");
+    console.log("\n⚠️ Not enough data to calculate indicators. Exiting.");
     return;
   }
 
@@ -572,8 +600,8 @@ async function run() {
   if (!allPass) {
     const failed = results.filter((r) => !r.pass).map((r) => r.label);
     console.log(`🚫 TRADE BLOCKED`);
-    console.log(`   Failed conditions:`);
-    failed.forEach((f) => console.log(`   - ${f}`));
+    console.log(` Failed conditions:`);
+    failed.forEach((f) => console.log(`  - ${f}`));
   } else {
     console.log(`✅ ALL CONDITIONS MET`);
 
@@ -581,7 +609,7 @@ async function run() {
       console.log(
         `\n📋 PAPER TRADE — would buy ${CONFIG.symbol} ~$${tradeSize.toFixed(2)} at market`,
       );
-      console.log(`   (Set PAPER_TRADING=false in .env to place real orders)`);
+      console.log(` (Set PAPER_TRADING=false in .env to place real orders)`);
       logEntry.orderPlaced = true;
       logEntry.orderId = `PAPER-${Date.now()}`;
     } else {
